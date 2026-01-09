@@ -1,0 +1,26 @@
+# Jitsi Transcription Pipeline - Python Dependencies
+# Python 3.10+ required
+# Windows: requires FFmpeg installation (https://ffmpeg.org/download.html)
+
+# Core Speech Recognition
+openai-whisper>=20240314
+
+# PyTorch (CPU optimized for Windows)
+# Note: For GPU support, install torch from: https://pytorch.org/get-started
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Audio & Media Processing
+pydub>=0.25.1
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Speaker Diarization (Silero VAD + SpeechBrain ECAPA-TDNN)
+# Fully open-source, no HuggingFace authentication required
+silero-vad>=1.0.0
+speechbrain>=0.5.13
+scikit-learn>=1.2.0
+
+# Testing & Quality Assurance (optional)
+pytest>=7.0.0
+pytest-cov>=4.0.0
