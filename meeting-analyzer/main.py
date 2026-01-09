@@ -27,7 +27,7 @@ def main():
         parser = TranscriptParser(clients.cohere_client)
         analyzer = MeetingAnalyzer(clients.cohere_client)
         vector_store = VectorStore(clients.qdrant_client, clients.embedding_model)
-        chat_interface = ChatInterface(clients.cohere_client, vector_store)
+        chat_interface = ChatInterface(clients, vector_store)  # Pass full clients object
         
         # Parse transcript
         print(f"\n{'='*60}")

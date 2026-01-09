@@ -3,8 +3,8 @@ from config.settings import Config
 class ChatInterface:
     """Interactive chat interface for meeting analysis"""
     
-    def __init__(self, cohere_client, vector_store):
-        self.cohere_client = cohere_client
+    def __init__(self, api_clients, vector_store):
+        self.api_clients = api_clients  # Changed to use api_clients instead of just cohere_client
         self.vector_store = vector_store
     
     def chat_with_transcript(self, user_question, processed_data, use_semantic_search=True):
@@ -72,15 +72,26 @@ USER QUESTION: {user_question}
 
 Provide a clear, concise answer based on the meeting data above. Use the relevant sections highlighted by semantic search for better context."""
 
-        response = self.cohere_client.chat(
-            model="command-r-v2",
-            preamble=system_prompt,
-            message=user_message,
-            temperature=0.3,
-            max_tokens=500
-        )
-
-        return response.text
+        # Use Ollama for Q&A to avoid Cohere rate limits
+        try:
+            response = self.api_clients.chat_with_ollama(
+                prompt=user_message,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=500
+            )
+            return response
+        except Exception as e:
+            print(f"⚠ Ollama failed, falling back to Cohere: {e}")
+            # Fallback to Cohere if Ollama fails
+            response = self.api_clients.cohere_client.chat(
+                model="command-r-v2",
+                preamble=system_prompt,
+                message=user_message,
+                temperature=0.3,
+                max_tokens=500
+            )
+            return response.text
     
     def interactive_chat(self, processed_data):
         """Start an interactive chat session with semantic search"""
@@ -88,7 +99,8 @@ Provide a clear, concise answer based on the meeting data above. Use the relevan
         print("🤖 INTERACTIVE MEETING ASSISTANT")
         print("="*60)
         print("Ask questions about the meeting using natural language.")
-        print("✨ Powered by Qdrant Cloud + Sentence Transformers + Cohere LLM")
+        print("✨ Powered by Qdrant Cloud + Sentence Transformers + Ollama (qwen2:1.5b)")
+        print("📝 Meeting analysis by Cohere, Q&A by Ollama (no rate limits!)")
         print("\n📋 Available Commands:")
         print("  • 'exit', 'quit', 'bye' - End chat session")
         print("  • 'summary' - Quick meeting overview")
@@ -185,11 +197,20 @@ Provide a clear, concise answer based on the meeting data above. Use the relevan
     
     def _perform_search(self, query, processed_data):
         """Perform semantic search"""
-        print(f"\n🔍 Searching for: '{query}'...\n")
-        results = self.vector_store.search_relevant_transcript(query, processed_data['meeting_id'], top_k=3)
-        print(f"🤖 Assistant: Top 3 most relevant transcript sections:\n")
-        for i, result in enumerate(results, 1):
-            payload = result.payload
-            print(f"{i}. [{payload['timestamp']}] 💬 {payload['speaker_name']}:")
-            print(f"   \"{payload['text']}\"")
-            print(f"   📊 Relevance Score: {result.score:.3f}\n")
+        print(f"\n🔍 Searching for: '{query}'...")
+        try:
+            results = self.vector_store.search_relevant_transcript(query, processed_data['meeting_id'], top_k=3)
+            
+            if not results:
+                print(f"🤖 Assistant: No relevant results found for '{query}'. Try a different search term.\n")
+                return
+                
+            print(f"🤖 Assistant: Top {len(results)} most relevant transcript sections:\n")
+            for i, result in enumerate(results, 1):
+                payload = result.payload
+                print(f"{i}. [{payload['timestamp']}] 💬 {payload['speaker_name']}:")
+                print(f"   \"{payload['text']}\"")
+                print(f"   📊 Relevance Score: {result.score:.3f}\n")
+        except Exception as e:
+            print(f"⚠ Error performing search: {e}")
+            print("Please try again or type 'exit' to quit.\n")

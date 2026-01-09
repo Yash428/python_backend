@@ -9,6 +9,12 @@ class Config:
     
     # API Keys
     COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+    
+    # Ollama Configuration (for Q&A to avoid rate limits)
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2:1.5b")
+    
+    # Qdrant Configuration
     QDRANT_URL = os.getenv("QDRANT_URL")
     QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
     

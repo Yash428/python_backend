@@ -60,22 +60,43 @@ class VectorStore:
         """
         Search for relevant transcript entries using semantic search in Qdrant
         """
-        # Generate embedding for the query
-        query_embedding = self.embedding_model.encode([query])[0].tolist()
+        try:
+            # Generate embedding for the query
+            query_embedding = self.embedding_model.encode([query])[0].tolist()
 
-        # Search in Qdrant
-        search_results = self.qdrant_client.search(
-            collection_name=Config.COLLECTION_NAME,
-            query_vector=query_embedding,
-            query_filter={
-                "must": [
-                    {
-                        "key": "meeting_id",
-                        "match": {"value": meeting_id}
-                    }
+            # Search in Qdrant using the correct API
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            
+            search_results = self.qdrant_client.search(
+                collection_name=Config.COLLECTION_NAME,
+                query_vector=query_embedding,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="meeting_id",
+                            match=MatchValue(value=meeting_id)
+                        )
+                    ]
+                ),
+                limit=top_k
+            )
+
+            return search_results
+        except Exception as e:
+            print(f"⚠ Search error: {e}")
+            # Fallback to search without filter if there's an issue
+            try:
+                search_results = self.qdrant_client.search(
+                    collection_name=Config.COLLECTION_NAME,
+                    query_vector=query_embedding,
+                    limit=top_k
+                )
+                # Filter results manually by meeting_id
+                filtered_results = [
+                    result for result in search_results 
+                    if result.payload.get("meeting_id") == meeting_id
                 ]
-            },
-            limit=top_k
-        )
-
-        return search_results
+                return filtered_results[:top_k]
+            except Exception as e2:
+                print(f"⚠ Fallback search also failed: {e2}")
+                return []
