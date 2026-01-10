@@ -44,25 +44,32 @@ class TranscriptParser:
     def analyze_sentiment(self, text):
         """
         Analyze sentiment of individual message using LLM
+        Returns numeric sentiment score (-1 to 1)
         """
         system_prompt = """You are a sentiment analyzer. Analyze the sentiment of the given text.
         Respond with ONLY ONE WORD: positive, neutral, or negative."""
 
-        response = self.cohere_client.chat(
-            model="command-r-v2",
-            preamble=system_prompt,
-            message=f"Analyze sentiment: '{text}'",
-            temperature=0.1,
-            max_tokens=5
-        )
+        try:
+            response = self.cohere_client.chat(
+                model="command-r-v2",
+                preamble=system_prompt,
+                message=f"Analyze sentiment: '{text}'",
+                temperature=0.1,
+                max_tokens=5
+            )
 
-        sentiment = response.text.strip().lower()
+            sentiment_text = response.text.strip().lower()
 
-        # Ensure valid sentiment
-        if sentiment not in ['positive', 'neutral', 'negative']:
-            sentiment = 'neutral'
-
-        return sentiment
+            # Convert to numeric score
+            if 'positive' in sentiment_text:
+                return 0.75  # Positive sentiment
+            elif 'negative' in sentiment_text:
+                return -0.75  # Negative sentiment
+            else:
+                return 0.0  # Neutral sentiment
+        except Exception as e:
+            print(f"Sentiment analysis error: {e}")
+            return 0.0  # Default to neutral on error
     
     def add_sentiment_analysis(self, transcript):
         """Add sentiment analysis to transcript entries"""

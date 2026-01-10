@@ -16,7 +16,7 @@ class MeetingAnalyzer:
 
         Focus on:
         - Executive summary (2-3 sentences)
-        - Action items with task, owner, deadline (ISO format if mentioned), and urgency_reason
+        - Action items with task, owner, deadline (ISO format if mentioned), urgency_reason, and tags
         - Topics discussed
         - Named entities (people, systems, tools)
         - Overall meeting sentiment
@@ -26,6 +26,8 @@ class MeetingAnalyzer:
         - Any mentioned deadlines or time pressures
         - Dependencies or blockers
         - Impact on the project
+
+        For tags, assign relevant categories like: development, documentation, testing, review, planning, communication, etc.
         """
 
         user_prompt = f"""Analyze this meeting transcript and return ONLY valid JSON:
@@ -41,7 +43,8 @@ Required JSON structure:
       "task": "description",
       "owner": "person name",
       "deadline": "YYYY-MM-DD or null",
-      "urgency_reason": "detailed explanation of task importance, context, and time sensitivity"
+      "urgency_reason": "detailed explanation of task importance, context, and time sensitivity",
+      "tags": ["tag1", "tag2"]
     }}
   ],
   "topics_discussed": ["topic1", "topic2"],
@@ -104,6 +107,19 @@ Context: {task.get('urgency_reason', 'N/A')}
             print(f"Warning: Urgency detection failed. Using default 'medium'. Error: {e}")
             return 'medium'
     
+    def compute_speaker_sentiment(self, sentiment_score):
+        """
+        Convert sentiment score to label: Positive, Negative, or Neutral
+        
+        Returns: "Positive", "Negative", or "Neutral"
+        """
+        if sentiment_score > 0.3:
+            return "Positive"
+        elif sentiment_score < -0.3:
+            return "Negative"
+        else:
+            return "Neutral"
+    
     def analyze_meeting(self, transcript):
         """
         Complete meeting analysis pipeline
@@ -147,6 +163,9 @@ Context: {task.get('urgency_reason', 'N/A')}
         for i, task in enumerate(llm_output.get("action_items", []), 1):
             print(f"  Analyzing urgency for task {i}/{len(llm_output.get('action_items', []))}...")
             task["urgency"] = self.compute_urgency_with_llm(task)
+            # Ensure tags exist
+            if "tags" not in task:
+                task["tags"] = []
 
         print("\n✓ Urgency analysis complete")
         

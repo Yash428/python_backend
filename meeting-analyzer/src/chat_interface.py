@@ -7,10 +7,68 @@ class ChatInterface:
         self.api_clients = api_clients  # Changed to use api_clients instead of just cohere_client
         self.vector_store = vector_store
     
+    def is_meeting_related_question(self, question, meeting_data):
+        """
+        Validate if the question is related to the meeting using LLM
+        Returns: (is_related: bool, reason: str)
+        """
+        try:
+            # Extract key topics and entities from meeting
+            summary = meeting_data.get('summary', {})
+            topics = summary.get('topics_discussed', [])
+            entities = summary.get('named_entities', [])
+            speakers = list(meeting_data.get('speakers', {}).keys())
+            
+            # Create context about the meeting
+            meeting_context = f"""
+Meeting Topics: {', '.join(topics) if topics else 'General discussion'}
+Participants: {', '.join(speakers) if speakers else 'Unknown'}
+Key Entities: {', '.join(entities) if entities else 'None'}
+"""
+            
+            validation_prompt = f"""You are a meeting assistant validator. Determine if the user's question is related to the meeting.
+
+Meeting Context:
+{meeting_context}
+
+User Question: "{question}"
+
+Rules:
+1. Questions about the meeting content, participants, decisions, action items, or topics discussed = RELATED
+2. Questions about meeting logistics (time, date, location) = RELATED
+3. Questions asking for meeting analysis or insights = RELATED
+4. Off-topic questions (weather, sports, general knowledge, etc.) = NOT RELATED
+5. Questions asking you to do things unrelated to the meeting = NOT RELATED
+
+Respond with ONLY "RELATED" or "NOT RELATED" followed by a brief reason."""
+
+            response = self.api_clients.chat_with_ollama(
+                prompt=validation_prompt,
+                temperature=0.2,
+                max_tokens=50
+            )
+            
+            response_text = response.strip().upper()
+            is_related = "RELATED" in response_text and "NOT" not in response_text
+            
+            return is_related, response_text
+            
+        except Exception as e:
+            print(f"⚠ Validation check failed: {e}")
+            # Default to allowing the question if validation fails
+            return True, "Validation skipped"
+    
     def chat_with_transcript(self, user_question, processed_data, use_semantic_search=True):
         """
         Answer user questions based on meeting data using LLM with semantic search
+        Only answers questions related to the meeting.
         """
+        # Validate if question is meeting-related
+        is_related, validation_reason = self.is_meeting_related_question(user_question, processed_data)
+        
+        if not is_related:
+            return f"I can only answer questions related to this meeting. Your question appears to be off-topic. Please ask something about the meeting content, participants, decisions, or action items."
+        
         transcript = processed_data.get('transcript', [])
         summary = processed_data.get('summary', {})
         meeting_id = processed_data.get('meeting_id')
@@ -20,10 +78,11 @@ class ChatInterface:
         if use_semantic_search and meeting_id:
             try:
                 search_results = self.vector_store.search_relevant_transcript(user_question, meeting_id, top_k=5)
-                relevant_context = "\n\nMOST RELEVANT TRANSCRIPT SECTIONS (Semantic Search):\n"
-                for i, result in enumerate(search_results, 1):
-                    payload = result.payload
-                    relevant_context += f"{i}. [{payload['timestamp']}] {payload['speaker_name']}: {payload['text']} (Relevance: {result.score:.3f})\n"
+                if search_results:
+                    relevant_context = "\n\nMOST RELEVANT TRANSCRIPT SECTIONS (Semantic Search):\n"
+                    for i, result in enumerate(search_results, 1):
+                        payload = result.payload
+                        relevant_context += f"{i}. [{payload['timestamp']}] {payload['speaker_name']}: {payload['text']} (Relevance: {result.score:.3f})\n"
             except Exception as e:
                 print(f"Semantic search warning: {e}")
 
@@ -56,9 +115,10 @@ OVERALL SENTIMENT: {summary.get('overall_sentiment', 'N/A')}
 """
 
         system_prompt = """You are an AI meeting assistant. Answer questions based ONLY on the provided meeting data.
-        Be concise and accurate. If information is not available, say so clearly.
-        Reference specific timestamps and speakers when relevant.
-        Prioritize information from the most relevant sections when available."""
+Be concise and accurate. If information is not available in the meeting, say so clearly.
+Reference specific timestamps and speakers when relevant.
+Prioritize information from the most relevant sections when available.
+Do not make up information that is not in the meeting."""
 
         user_message = f"""
 FULL MEETING TRANSCRIPT:
@@ -70,7 +130,8 @@ MEETING SUMMARY:
 
 USER QUESTION: {user_question}
 
-Provide a clear, concise answer based on the meeting data above. Use the relevant sections highlighted by semantic search for better context."""
+Provide a clear, concise answer based on the meeting data above. Use the relevant sections highlighted by semantic search for better context.
+If the answer is not available in the meeting data, clearly state that."""
 
         # Use Ollama for Q&A to avoid Cohere rate limits
         try:
@@ -162,6 +223,128 @@ Provide a clear, concise answer based on the meeting data above. Use the relevan
         print(f"\n📊 Statistics:")
         print(f"   • Action Items: {len(processed_data['summary'].get('action_items', []))}")
         print(f"   • Overall Sentiment: {processed_data['overall_sentiment']}")
+        print(f"   • Topics: {', '.join(processed_data['summary'].get('topics_discussed', ['N/A']))}")
+        print(f"   • Participants: {', '.join(processed_data['summary'].get('named_entities', ['N/A']))}\n")
+    
+    def _show_actions(self, processed_data):
+        """Show all action items"""
+        print(f"\n🤖 Assistant: Here are all action items:\n")
+        for i, item in enumerate(processed_data['summary'].get('action_items', []), 1):
+            urgency_emoji = {
+                'critical': '🔴',
+                'high': '🟠',
+                'medium': '🟡',
+                'low': '🟢'
+            }.get(item.get('urgency', 'medium'), '⚪')
+
+            print(f"{i}. {urgency_emoji} [{item.get('urgency', 'N/A').upper()}] {item.get('task', 'N/A')}")
+            print(f"   👤 Owner: {item.get('owner', 'N/A')}")
+            print(f"   📅 Deadline: {item.get('deadline', 'Not specified')}")
+            print(f"   💡 Reason: {item.get('urgency_reason', 'N/A')}\n")
+    
+    def _show_stats(self, processed_data):
+        """Show Qdrant statistics"""
+        try:
+            collection_info = self.vector_store.qdrant_client.get_collection(Config.COLLECTION_NAME)
+            print(f"\n🤖 Assistant: Qdrant Cloud Storage Statistics:")
+            print(f"   • Collection: {Config.COLLECTION_NAME}")
+            print(f"   • Total vectors: {collection_info.points_count}")
+            print(f"   • Vector dimension: {collection_info.config.params.vectors.size}")
+            print(f"   • Distance metric: {collection_info.config.params.vectors.distance}")
+            print(f"   • Current Meeting ID: {processed_data['meeting_id']}")
+            print(f"   • Embedding Model: {Config.EMBEDDING_MODEL}\n")
+        except Exception as e:
+            print(f"\n⚠ Error fetching stats: {e}\n")
+    
+    def _perform_search(self, query, processed_data):
+        """Perform semantic search"""
+        print(f"\n🔍 Searching for: '{query}'...")
+        try:
+            results = self.vector_store.search_relevant_transcript(query, processed_data['meeting_id'], top_k=3)
+            
+            if not results:
+                print(f"🤖 Assistant: No relevant results found for '{query}'. Try a different search term.\n")
+                return
+                
+            print(f"🤖 Assistant: Top {len(results)} most relevant transcript sections:\n")
+            for i, result in enumerate(results, 1):
+                payload = result.payload
+                print(f"{i}. [{payload['timestamp']}] 💬 {payload['speaker_name']}:")
+                print(f"   \"{payload['text']}\"")
+                print(f"   📊 Relevance Score: {result.score:.3f}\n")
+        except Exception as e:
+            print(f"⚠ Error performing search: {e}")
+            print("Please try again or type 'exit' to quit.\n")
+    
+    def interactive_chat(self, processed_data):
+        """Start an interactive chat session with semantic search"""
+        print("\n" + "="*60)
+        print("🤖 INTERACTIVE MEETING ASSISTANT")
+        print("="*60)
+        print("Ask questions about the meeting using natural language.")
+        print("✨ Powered by Qdrant Cloud + Sentence Transformers + Ollama (qwen2:1.5b)")
+        print("📝 Meeting analysis by Cohere, Q&A by Ollama (no rate limits!)")
+        print("\n📋 Available Commands:")
+        print("  • 'exit', 'quit', 'bye' - End chat session")
+        print("  • 'summary' - Quick meeting overview")
+        print("  • 'search <query>' - Semantic search in transcript")
+        print("  • 'stats' - Qdrant storage statistics")
+        print("  • 'actions' - List all action items with urgency")
+        print("="*60 + "\n")
+
+        while True:
+            try:
+                user_input = input("You: ").strip()
+
+                if not user_input:
+                    continue
+
+                if user_input.lower() in ['exit', 'quit', 'bye']:
+                    print("\n✓ Chat session ended. Thank you! 👋")
+                    break
+
+                # Quick summary command
+                if user_input.lower() == 'summary':
+                    self._show_summary(processed_data)
+                    continue
+
+                # Actions command
+                if user_input.lower() == 'actions':
+                    self._show_actions(processed_data)
+                    continue
+
+                # Stats command
+                if user_input.lower() == 'stats':
+                    self._show_stats(processed_data)
+                    continue
+
+                # Semantic search command
+                if user_input.lower().startswith('search '):
+                    query = user_input[7:].strip()
+                    if query:
+                        self._perform_search(query, processed_data)
+                    continue
+
+                # Regular question - use LLM with semantic search
+                print(f"\n🔍 Analyzing your question...\n")
+                response = self.chat_with_transcript(user_input, processed_data, use_semantic_search=True)
+                print(f"🤖 Assistant: {response}\n")
+
+            except KeyboardInterrupt:
+                print("\n\n✓ Chat interrupted. Goodbye! 👋")
+                break
+            except Exception as e:
+                print(f"\n⚠ Error: {e}")
+                print("Please try again or type 'exit' to quit.\n")
+    
+    def _show_summary(self, processed_data):
+        """Show quick meeting summary"""
+        print(f"\n🤖 Assistant: Here's your meeting overview:")
+        print(f"\n📝 Executive Summary:")
+        print(f"   {processed_data['summary'].get('executive_summary', 'N/A')}")
+        print(f"\n📊 Statistics:")
+        print(f"   • Action Items: {len(processed_data['summary'].get('action_items', []))}")
+        print(f"   • Overall Sentiment: {processed_data['summary'].get('overall_sentiment', 'N/A')}")
         print(f"   • Topics: {', '.join(processed_data['summary'].get('topics_discussed', ['N/A']))}")
         print(f"   • Participants: {', '.join(processed_data['summary'].get('named_entities', ['N/A']))}\n")
     
